@@ -7,7 +7,7 @@ const translations = {
         pill_outer: "Outer",
         pill_padding: "Padding",
         pill_inner: "Inner",
-        footer: "Made for designers"
+        footer: "Open Source project on GitHub | Made for designers"
     },
     ru: {
         title: "Калькулятор скругления",
@@ -17,7 +17,7 @@ const translations = {
         pill_outer: "Внешний",
         pill_padding: "Отступ",
         pill_inner: "Внутр.",
-        footer: "Сделано для дизайнеров"
+        footer: "Проект с открытым исходным кодом на GitHub | Сделано для дизайнеров"
     },
     ua: {
         title: "Калькулятор заокруглення",
@@ -27,7 +27,7 @@ const translations = {
         pill_outer: "Зовн.",
         pill_padding: "Відступ",
         pill_inner: "Внутр.",
-        footer: "Зроблено для дизайнерів"
+        footer: "Проєкт з відкритим кодом на GitHub | Зроблено для дизайнерів"
     },
     hi: {
         title: "कोना त्रिज्या कैलकुलेटर",
@@ -37,7 +37,7 @@ const translations = {
         pill_outer: "बाहरी",
         pill_padding: "पैडिंग",
         pill_inner: "आंतरिक",
-        footer: "डिजाइनरों के लिए बनाया गया"
+        footer: "GitHub पर ओपन सोर्स प्रोजेक्ट | डिजाइनरों के लिए बनाया गया"
     },
     es: {
         title: "Calculadora de Radio",
@@ -47,7 +47,7 @@ const translations = {
         pill_outer: "Exterior",
         pill_padding: "Relleno",
         pill_inner: "Interior",
-        footer: "Hecho para diseñadores"
+        footer: "Proyecto Open Source en GitHub | Hecho para diseñadores"
     },
     ar: {
         title: "حاسبة نصف القطر",
@@ -57,7 +57,7 @@ const translations = {
         pill_outer: "خارجي",
         pill_padding: "حشوة",
         pill_inner: "داخلي",
-        footer: "صنع للمصممين"
+        footer: "مشروع مفتوح المصدر على GitHub | صنع للمصممين"
     },
     fr: {
         title: "Calculateur de Rayon",
@@ -67,7 +67,7 @@ const translations = {
         pill_outer: "Externe",
         pill_padding: "Marge",
         pill_inner: "Interne",
-        footer: "Fait pour les designers"
+        footer: "Projet Open Source sur GitHub | Fait pour les designers"
     },
     pt: {
         title: "Calculadora de Raio",
@@ -77,7 +77,7 @@ const translations = {
         pill_outer: "Externo",
         pill_padding: "Padding",
         pill_inner: "Interno",
-        footer: "Feito para designers"
+        footer: "Projeto Open Source no GitHub | Feito para designers"
     },
     de: {
         title: "Eckenradius Rechner",
@@ -87,7 +87,7 @@ const translations = {
         pill_outer: "Außen",
         pill_padding: "Abstand",
         pill_inner: "Innen",
-        footer: "Gemacht für Designer"
+        footer: "Open-Source-Projekt auf GitHub | Gemacht für Designer"
     },
     id: {
         title: "Kalkulator Radius",
@@ -97,7 +97,7 @@ const translations = {
         pill_outer: "Luar",
         pill_padding: "Padding",
         pill_inner: "Dalam",
-        footer: "Dibuat untuk desainer"
+        footer: "Proyek Open Source di GitHub | Dibuat untuk desainer"
     }
 };
 
