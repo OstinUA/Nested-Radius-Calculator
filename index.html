@@ -1,0 +1,93 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Corner Radius Calculator</title>
+    <link rel="stylesheet" href="style.css">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+</head>
+<body>
+
+    <main class="container">
+        <div class="lang-switch">
+            <select id="langSelect">
+                <option value="en">English</option>
+                <option value="ru">Русский</option>
+                <option value="ua">Українська</option>
+                <option value="hi">हिन्दी (Hindi)</option>
+                <option value="es">Español</option>
+                <option value="ar">العربية (Arabic)</option>
+                <option value="fr">Français</option>
+                <option value="pt">Português</option>
+                <option value="de">Deutsch</option>
+                <option value="id">Bahasa Indonesia</option>
+            </select>
+        </div>
+
+        <header class="formula-bar">
+            <div class="pill pill-inner" data-i18n="pill_inner">Inner</div>
+            <span class="operator">+</span>
+            <div class="pill pill-padding" data-i18n="pill_padding">Padding</div>
+            <span class="operator">=</span>
+            <div class="pill pill-outer" data-i18n="pill_outer">Outer</div>
+        </header>
+
+        <h1 class="main-title" data-i18n="title">Corner Radius Calculator</h1>
+
+        <div class="calculator-grid">
+            <section class="controls">
+                
+                <div class="input-group">
+                    <label>
+                        <span class="dot dot-outer"></span> <span data-i18n="label_outer">Outer Radius</span>
+                    </label>
+                    <div class="input-wrapper">
+                        <input type="number" id="outerInput" value="40" min="0">
+                        <span class="unit">px</span>
+                    </div>
+                    <input type="range" id="outerRange" min="0" max="200" value="40" class="slider slider-outer">
+                </div>
+
+                <div class="input-group">
+                    <label>
+                        <span class="dot dot-padding"></span> <span data-i18n="label_padding">Padding</span>
+                    </label>
+                    <div class="input-wrapper">
+                        <input type="number" id="paddingInput" value="10" min="0">
+                        <span class="unit">px</span>
+                    </div>
+                    <input type="range" id="paddingRange" min="0" max="100" value="10" class="slider slider-padding">
+                </div>
+
+                <div class="divider"></div>
+
+                <div class="input-group">
+                    <label>
+                        <span class="dot dot-inner"></span> <span data-i18n="label_inner">Inner Radius</span>
+                    </label>
+                    <div class="input-wrapper">
+                        <input type="number" id="innerInput" value="30" min="0">
+                        <span class="unit">px</span>
+                    </div>
+                    <input type="range" id="innerRange" min="0" max="200" value="30" class="slider slider-inner">
+                </div>
+
+            </section>
+
+            <section class="preview-area">
+                <div class="preview-canvas">
+                    <div class="box-outer" id="previewOuter">
+                        <div class="box-inner" id="previewInner"></div>
+                    </div>
+                </div>
+            </section>
+        </div>
+        
+        <footer class="footer-note" data-i18n="footer">Made for designers</footer>
+    </main>
+
+    <script src="translations.js"></script>
+    <script src="script.js"></script>
+</body>
+</html>
