@@ -1,168 +1,133 @@
 # Nested Radius Calculator
 
-![GitHub last commit](https://img.shields.io/github/last-commit/OstinUA/Nested-Radius-Calculator)
-![GitHub language count](https://img.shields.io/github/languages/count/OstinUA/Nested-Radius-Calculator)
-![GitHub top language](https://img.shields.io/github/languages/top/OstinUA/Nested-Radius-Calculator)
+> Pixel-perfect nested border-radius math for UI engineers who hate eyeballing corners.
 
-A tool for UI/UX designers and frontend developers. It allows for the instant calculation of the perfect corner radius for nested elements based on the outer radius and padding.
+[![Build Status](https://img.shields.io/badge/build-static%20site-brightgreen?style=flat-square)](https://github.com/OstinUA/Nested-Radius-Calculator)
+[![Version](https://img.shields.io/badge/version-1.0.0-blue?style=flat-square)](https://github.com/OstinUA/Nested-Radius-Calculator)
+[![License: Apache 2.0](https://img.shields.io/badge/license-Apache%202.0-orange?style=flat-square)](LICENSE)
+[![Coverage](https://img.shields.io/badge/coverage-manual-lightgrey?style=flat-square)](https://github.com/OstinUA/Nested-Radius-Calculator)
 
-**[Open Demo](https://ostinua.github.io/Nested-Radius-Calculator/)**
-
----
-
-## Overview
-
-When creating interfaces, a common issue arises: if the same `border-radius` is set for both the outer container and the inner button, the corner spacing appears uneven. To make the interface look harmonious, the concentric radius rule must be applied.
-
-This calculator automates the selection process, providing a visual preview and mathematically accurate data.
+**Live demo:** [Open in browser](https://ostinua.github.io/Nested-Radius-Calculator/)
 
 ![Preview Screenshot](img_nested-radius-calculator.PNG)
 
-## Key Features
+## Table of Contents
 
-* **Bidirectional Synchronization:** Changing any parameter (outer radius, padding, or inner radius) automatically recalculates the other values.
-* **Real-time Visualization:** You can instantly see the result of applying `border-radius` and `padding` CSS properties.
-* **Mathematical Precision:** Eliminates errors caused by visual estimation.
-* **Multilingual:** Supports 10 interface languages.
+- [Features](#features)
+- [Tech Stack](#tech-stack)
+- [Project Structure](#project-structure)
+- [Getting Started](#getting-started)
+  - [Prerequisites](#prerequisites)
+  - [Installation](#installation)
+- [Usage](#usage)
+- [Configuration](#configuration)
+- [License](#license)
+- [Contacts](#contacts)
 
-## Mathematical Logic
+## Features
 
-The tool is based on the principle of concentric shapes. To ensure the border thickness (or padding) appears consistent on straight sections and in corners, the following formula is used:
+- Two-way sync between `outer radius`, `padding`, and `inner radius`.
+- Real-time visual preview of nested corners.
+- Formula-driven calculation using concentric radius logic.
+- Guard rails for invalid geometry (`inner radius` is clamped at `0`).
+- Fast, dependency-free runtime (no bundler, no build step).
+- Built-in multilingual support via translation dictionary.
 
-$$R_{inner} = R_{outer} - Padding$$
+## Tech Stack
 
-Where:
-* **R outer** — Parent container corner radius.
-* **Padding** — Distance between the parent and child elements.
-* **R inner** — Target radius of the child element.
-
-> If $R_{outer} < Padding$, the inner radius must be 0; otherwise, the nested element will overflow the parent's curvature. The calculator accounts for this constraint.
-
-## Language Support
-
-The interface is translated into 10 languages for the convenience of users worldwide:
-
-| Language | Menu Name |
-| :--- | :--- |
-| English | English |
-| Russian | Русский |
-| Ukrainian | Українська |
-| Hindi | हिन्दी (Hindi) |
-| Spanish | Español |
-| Arabic | العربية (Arabic) |
-| French | Français |
-| Portuguese | Português |
-| German | Deutsch |
-| Indonesian | Bahasa Indonesia |
-
-## Installation and Launch
-
-The project does not require building, dependency installation, or Node.js. It is written in pure HTML, CSS, and JavaScript.
-
-**Local Launch:**
-
-1.  Clone the repository:
-    ```bash
-    git clone [https://github.com/OstinUA/Nested-Radius-Calculator.git](https://github.com/OstinUA/Nested-Radius-Calculator.git)
-    ```
-2.  Open the `index.html` file in any modern browser.
-
-**GitHub Pages Deployment:**
-
-1.  Go to repository **Settings**.
-2.  Navigate to the **Pages** section.
-3.  Under **Branch**, select `main` and click **Save**.
-4.  In a few minutes, the site will be available at the link provided in the settings.
+- `HTML5`
+- `CSS3`
+- `Vanilla JavaScript (ES6+)`
+- `GitHub Pages` for hosting
 
 ## Project Structure
 
-* `index.html` — Markup and application structure.
-* `style.css` — Styling, color variables, and responsiveness.
-* `script.js` — Calculation logic and event handling.
-* `translations.js` — Object containing language packages.
+```text
+Nested-Radius-Calculator/
+├── index.html         # App shell and UI markup
+├── style.css          # Styling and responsive layout
+├── script.js          # Radius math + UI event wiring
+├── translations.js    # i18n strings map
+├── LICENSE            # Apache 2.0
+└── README.md          # Project docs
+```
 
----
+## Getting Started
 
-# Nested Radius Calculator
+### Prerequisites
 
-![GitHub last commit](https://img.shields.io/github/last-commit/OstinUA/Nested-Radius-Calculator)
-![GitHub language count](https://img.shields.io/github/languages/count/OstinUA/Nested-Radius-Calculator)
-![GitHub top language](https://img.shields.io/github/languages/top/OstinUA/Nested-Radius-Calculator)
+You only need a modern browser:
 
-Инструмент для UI/UX дизайнеров и фронтенд-разработчиков. Позволяет мгновенно рассчитать идеальный радиус скругления для вложенных элементов, основываясь на внешнем радиусе и отступах (padding).
+- `Chrome`, `Firefox`, `Safari`, or `Edge`
+- `Git` (optional, only for cloning)
 
-**[Открыть демо](https://ostinua.github.io/Nested-Radius-Calculator/)**
+### Installation
 
----
+```bash
+# 1) Clone the repo
+git clone https://github.com/OstinUA/Nested-Radius-Calculator.git
 
-## Обзор
+# 2) Move into the project folder
+cd Nested-Radius-Calculator
 
-При создании интерфейсов часто возникает проблема: если задать одинаковый `border-radius` для внешнего контейнера и внутренней кнопки, отступы в углах будут визуально казаться неравномерными. Чтобы интерфейс выглядел гармонично, необходимо использовать правило концентрических радиусов.
+# 3) Run locally by opening the HTML entrypoint
+# Linux:
+xdg-open index.html
+# macOS:
+open index.html
+# Windows (PowerShell):
+start index.html
+```
 
-Этот калькулятор автоматизирует процесс подбора значений, предоставляя визуальное превью и математически точные данные.
+## Usage
 
-![Preview Screenshot](img_nested-radius-calculator.PNG)
+```bash
+# Optional: start a tiny local server (better for consistent browser behavior)
+python3 -m http.server 8080
 
-## Основные возможности
+# Then open:
+# http://localhost:8080
+```
 
-* **Двусторонняя синхронизация:** Изменение любого параметра (внешний радиус, отступ или внутренний радиус) автоматически пересчитывает остальные значения.
-* **Визуализация в реальном времени:** Вы сразу видите результат применения CSS-свойств `border-radius` и `padding`.
-* **Математическая точность:** Исключает ошибки визуального подбора "на глаз".
-* **Мультиязычность:** Поддержка 10 языков интерфейса.
+```text
+1) Set the outer radius of the parent container.
+2) Set padding between parent and child.
+3) Read the computed inner radius.
+4) Copy values into CSS: border-radius + padding.
+```
 
-## Математическая логика
+Core formula used by the calculator:
 
-В основе работы лежит принцип концентричности фигур. Для того чтобы толщина рамки (или отступа) казалась одинаковой на прямых участках и в углах, используется формула:
+```text
+innerRadius = max(outerRadius - padding, 0)
+```
 
-$$R_{inner} = R_{outer} - Padding$$
+## Configuration
 
-Где:
-* **R outer** — Радиус скругления родительского контейнера.
-* **Padding** — Расстояние между родительским и дочерним элементом.
-* **R inner** — Искомый радиус дочернего элемента.
+This project is intentionally zero-config:
 
-> Если $R_{outer} < Padding$, внутренний радиус должен быть равен 0, иначе вложенный элемент выйдет за пределы родительского скругления. Калькулятор учитывает это ограничение.
+- No `.env` required.
+- No runtime flags.
+- No external services.
 
-## Поддержка языков
+To customize behavior, edit:
 
-Интерфейс переведен на 10 языков для удобства пользователей по всему миру:
+- `translations.js` for language packs.
+- `style.css` for theming and layout tuning.
+- `script.js` for calculation or UI logic.
 
-| Язык | Название в меню |
-| :--- | :--- |
-| Английский | English |
-| Русский | Русский |
-| Украинский | Українська |
-| Хинди | हिन्दी (Hindi) |
-| Испанский | Español |
-| Арабский | العربية (Arabic) |
-| Французский | Français |
-| Португальский | Português |
-| Немецкий | Deutsch |
-| Индонезийский | Bahasa Indonesia |
+## License
 
-## Установка и запуск
+Distributed under the Apache 2.0 License. See `LICENSE` for full legal text.
 
-Проект не требует сборки, установки зависимостей или использования Node.js. Он написан на чистом HTML, CSS и JavaScript.
+## Contacts
 
-**Локальный запуск:**
+## ❤️ Support the Project
 
-1.  Склонируйте репозиторий:
-    ```bash
-    git clone [https://github.com/OstinUA/Nested-Radius-Calculator.git](https://github.com/OstinUA/Nested-Radius-Calculator.git)
-    ```
-2.  Откройте файл `index.html` в любом современном браузере.
+If you find this tool useful, consider leaving a ⭐ on GitHub or supporting the author directly:
 
-**Размещение на GitHub Pages:**
-
-1.  Зайдите в настройки репозитория (Settings).
-2.  Перейдите в раздел **Pages**.
-3.  В пункте **Branch** выберите `main` и нажмите **Save**.
-4.  Через несколько минут сайт будет доступен по ссылке, указанной в настройках.
-
-## Структура проекта
-
-* `index.html` — Разметка и структура приложения.
-* `style.css` — Стилизация, цветовые переменные и адаптивность.
-* `script.js` — Логика вычислений и обработка событий.
-* `translations.js` — Объект с языковыми пакетами.
-
+[![Patreon](https://img.shields.io/badge/Patreon-OstinFCT-f96854?style=flat-square&logo=patreon)](https://www.patreon.com/OstinFCT)
+[![Ko-fi](https://img.shields.io/badge/Ko--fi-fctostin-29abe0?style=flat-square&logo=ko-fi)](https://ko-fi.com/fctostin)
+[![Boosty](https://img.shields.io/badge/Boosty-Support-f15f2c?style=flat-square)](https://boosty.to/ostinfct)
+[![YouTube](https://img.shields.io/badge/YouTube-FCT--Ostin-red?style=flat-square&logo=youtube)](https://www.youtube.com/@FCT-Ostin)
+[![Telegram](https://img.shields.io/badge/Telegram-FCTostin-2ca5e0?style=flat-square&logo=telegram)](https://t.me/FCTostin)
