@@ -1,0 +1,31 @@
+name: PR to Issue
+
+on:
+  pull_request:
+    types: [labeled]
+
+jobs:
+  build:
+    if: github.event.label.name == 'auto-document'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write
+      pull-requests: read
+
+    steps:
+      - uses: actions/checkout@v4
+      
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          
+      - run: pip install PyGithub requests
+      
+      - run: python process_pr.py
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          REPOSITORY: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          ALLOWED_USER: ${{ secrets.ALLOWED_USER }}
