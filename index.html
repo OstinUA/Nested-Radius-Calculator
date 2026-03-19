@@ -11,18 +11,7 @@
 
     <main class="container">
         <div class="lang-switch">
-            <select id="langSelect">
-                <option value="en">English</option>
-                <option value="ru">Русский</option>
-                <option value="ua">Українська</option>
-                <option value="hi">हिन्दी (Hindi)</option>
-                <option value="es">Español</option>
-                <option value="ar">العربية (Arabic)</option>
-                <option value="fr">Français</option>
-                <option value="pt">Português</option>
-                <option value="de">Deutsch</option>
-                <option value="id">Bahasa Indonesia</option>
-            </select>
+            <select id="langSelect" aria-label="Language selector"></select>
         </div>
 
         <header class="formula-bar">
@@ -87,7 +76,6 @@
         <footer class="footer-note" data-i18n="footer">Open Source project on GitHub | Made for designers</footer>
     </main>
 
-    <script src="translations.js"></script>
-    <script src="script.js"></script>
+    <script type="module" src="script.js"></script>
 </body>
 </html>

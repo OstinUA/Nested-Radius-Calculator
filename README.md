@@ -45,7 +45,7 @@ A zero-build, browser-native utility for calculating visually correct nested cor
   - range sliders for fast exploratory tuning
 - Built-in guardrail logic that clamps computed values to non-negative results.
 - Zero-build architecture with no bundler, package manager, or runtime dependency installation required.
-- Multilingual interface support driven by an in-repo translation dictionary.
+- Multilingual interface support driven by a modular ISO locale registry with per-language files.
 - Responsive, single-page layout suitable for desktop and tablet browser workflows.
 - GitHub Pages-friendly hosting model for frictionless publishing and sharing.
 
@@ -76,7 +76,9 @@ Nested-Radius-Calculator/
 ├── process_pr.py                # Repository utility script
 ├── script.js                    # Radius calculation, event handlers, and rendering logic
 ├── style.css                    # Theme, spacing, responsive layout, and preview styling
-└── translations.js              # Translation dictionary and language switch handler
+└── i18n/                        # Locale registry, validation, and per-language dictionaries
+    ├── index.mjs                # i18n entry point and key synchronization guard
+    └── locales/                 # One ISO-locale file per supported language
 ```
 
 ### Key Design Decisions
@@ -97,8 +99,8 @@ outerRadius = innerRadius + padding
 
 This ensures the preview remains logically coherent regardless of which control the user edits.
 
-#### 4. Dictionary-based localization
-Translations are stored in a plain JavaScript object and applied to nodes marked with `data-i18n`. This is lightweight, framework-agnostic, and sufficient for a compact interface.
+#### 4. Modular file-based localization
+Translations are stored in dedicated locale modules under `i18n/locales/` and applied to nodes marked with `data-i18n`. A central registry validates that every locale exposes the exact same keys before the UI initializes, preventing missing-string runtime errors while keeping the system lightweight and framework-agnostic.
 
 #### 5. Preview as the primary feedback loop
 The rendered nested boxes visually confirm the numerical calculation. This is especially useful for UI engineers and designers validating perceptual corner balance rather than relying on raw numbers alone.
@@ -197,7 +199,7 @@ Then verify the following behaviors in the browser:
 3. Changing `Inner Radius` updates `Outer Radius` as `inner + padding`.
 4. Range sliders and number inputs remain synchronized for all three values.
 5. The preview boxes update instantly to reflect new radius and padding values.
-6. Switching languages updates all `data-i18n` labels and footer text.
+6. Switching languages updates all `data-i18n` labels, the document title, and footer text across every supported locale.
 7. Responsive layout remains usable below `768px` viewport width.
 
 ### Recommended commands if you add quality gates
@@ -212,7 +214,7 @@ npx html-validate index.html
 npx stylelint "*.css"
 
 # JavaScript linting example
-npx eslint script.js translations.js
+npx eslint script.js i18n/index.mjs i18n/locales/*.mjs
 ```
 
 > [!WARNING]
@@ -247,7 +249,7 @@ You can also deploy the repository to any static platform, including:
 
 ### Production deployment checklist
 
-- Keep `index.html`, `style.css`, `script.js`, and `translations.js` in the same relative paths.
+- Keep `index.html`, `style.css`, `script.js`, and the `i18n/` directory in their current relative paths.
 - Verify that the Google Fonts stylesheet is reachable in your deployment environment.
 - Confirm the preview image path if you mirror the README externally.
 - Set appropriate caching rules for static assets if hosting behind a CDN.
