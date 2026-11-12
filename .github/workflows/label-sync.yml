@@ -12,6 +12,7 @@ permissions: read-all
 
 jobs:
   sync:
+    name: Sync repository labels
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
@@ -20,9 +21,11 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v6
+        with:
+          persist-credentials: false
 
       - name: Sync labels
-        uses: EndBug/add-and-update-labels@v1
+        uses: EndBug/label-sync@v2
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
           config-file: .github/labels.yml

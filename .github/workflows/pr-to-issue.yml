@@ -4,25 +4,37 @@ on:
   pull_request:
     types: [labeled]
 
+permissions: read-all
+
 jobs:
-  build:
+  document:
+    name: Generate issue from pull request
     if: github.event.label.name == 'auto-document'
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     permissions:
       contents: read
       issues: write
       pull-requests: read
 
     steps:
-      - uses: actions/checkout@v6
-      
-      - uses: actions/setup-python@v6
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
         with:
           python-version: '3.11'
-          
-      - run: pip install PyGithub requests
-      
-      - run: python process_pr.py
+
+      # Pinned for reproducibility: an unpinned install would silently pick up
+      # whatever version is current when the workflow runs.
+      - name: Install dependencies
+        run: pip install --no-cache-dir -r tools/requirements.txt
+
+      - name: Run PR documentation
+        run: python process_pr.py
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}

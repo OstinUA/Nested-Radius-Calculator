@@ -1,0 +1,12 @@
+# Byte-compiled Python artifacts
+__pycache__/
+*.py[cod]
+
+# Virtual environments
+.venv/
+venv/
+
+# Editor and OS noise
+.DS_Store
+.idea/
+.vscode/

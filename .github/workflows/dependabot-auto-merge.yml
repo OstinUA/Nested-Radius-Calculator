@@ -12,6 +12,7 @@ concurrency:
 
 jobs:
   automerge:
+    name: Approve and merge safe updates
     if: github.event.pull_request.user.login == 'dependabot[bot]'
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -26,6 +27,8 @@ jobs:
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
 
+      # `update-type` is empty for some ecosystems, so it is compared against
+      # the semver values rather than negated against "major".
       - name: Approve safe non-breaking updates
         if: |
           github.event.pull_request.draft == false &&
@@ -33,7 +36,8 @@ jobs:
            steps.metadata.outputs.update-type == 'version-update:semver-minor')
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: gh pr review "${{ github.event.pull_request.number }}" --approve
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: gh pr review "$PR_NUMBER" --approve
 
       - name: Enable auto-merge for safe non-breaking updates
         if: |
@@ -42,4 +46,5 @@ jobs:
            steps.metadata.outputs.update-type == 'version-update:semver-minor')
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: gh pr merge "${{ github.event.pull_request.number }}" --auto --merge
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: gh pr merge "$PR_NUMBER" --auto --merge

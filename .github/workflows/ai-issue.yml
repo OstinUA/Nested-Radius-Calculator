@@ -14,7 +14,8 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  analyze_code:
+  analyze:
+    name: Analyze change set
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
@@ -23,19 +24,22 @@ jobs:
       pull-requests: write
 
     steps:
-      - name: Checkout code
+      - name: Checkout
         uses: actions/checkout@v6
+        with:
+          persist-credentials: false
 
       - name: Set up Python
         uses: actions/setup-python@v6
         with:
           python-version: '3.11'
 
+      # Pinned for reproducibility: an unpinned install would silently pick up
+      # whatever version is current when the workflow runs.
       - name: Install dependencies
-        run: |
-          pip install --no-cache-dir PyGithub==2.5.0 requests==2.32.3
+        run: pip install --no-cache-dir -r tools/requirements.txt
 
-      - name: Run AI Analysis
+      - name: Run analysis
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           REPOSITORY: ${{ github.repository }}

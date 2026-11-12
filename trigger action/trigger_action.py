@@ -1,282 +1,111 @@
-"""Create GitHub issues and PR comments from AI-generated change analysis.
-https://github.com/assembly-automation-hub/repo-governance
+"""Create a triage issue, and optionally a pull request summary, from a change set.
 
-This module runs inside GitHub Actions and inspects either push or pull request
-events. It gathers the relevant diff, sends the change summary to a hosted model,
-and uses the structured JSON response to open a GitHub issue and optionally post
-a pull request comment.
+Invoked by ``.github/workflows/ai-issue.yml`` for pushes to the default branch and
+for pull requests. The module collects the change set, selects a review persona
+from the trigger labels (falling back to content heuristics), asks a hosted model
+for a structured report, and publishes that report as a GitHub issue.
 
-The entry-point is the module itself — there are no classes. Execution proceeds
-top-to-bottom: environment variables are read, the diff is collected, a
-role-specific prompt is assembled based on the event's trigger labels, the
-hosted model is called, and finally a GitHub issue (and optional PR comment)
-is created.
+The script is best-effort by contract: it runs as repository housekeeping, so any
+recoverable failure (model outage, malformed reply, duplicate issue) ends the run
+with a message instead of failing the workflow. Configuration errors are the
+exception and abort immediately with a non-zero status.
 
-Attributes:
-    gh_token (str | None): GitHub personal access token sourced from the
-        ``GITHUB_TOKEN`` environment variable. Used to authenticate all
-        PyGithub API calls.
-    model_token (str | None): Bearer token for the Azure-hosted model endpoint,
-        sourced from the ``GH_MODELS_TOKEN`` environment variable.
-    repo_name (str | None): The ``owner/repo`` identifier of the target
-        repository, sourced from the ``REPOSITORY`` environment variable.
-    event_name (str | None): The GitHub Actions event that triggered this
-        workflow run (``"push"`` or ``"pull_request"``), sourced from the
-        ``EVENT_NAME`` environment variable.
-    allowed_users (list[str]): Lowercase login names of GitHub users whose
-        events are eligible for analysis. Parsed from the comma-separated
-        ``ALLOWED_USER`` environment variable.
-    MODEL_NAME (str): The model identifier used in every inference request.
-    ENDPOINT (str): The Azure inference API URL for chat completions.
-    diff_text (str): Accumulated file-patch text collected from the triggering
-        commit or pull request. Capped at 10 000 characters for push events and
-        80 000 characters for pull-request events to stay within model limits.
-    event_context (str): A short human-readable description of the event (e.g.
-        commit message or PR title/body) prepended to every model prompt.
-    author_login (str): Lowercase GitHub login of the commit author or PR
-        author used for allow-list enforcement.
-    trigger_labels (list[str]): Lowercase label strings extracted from the
-        commit message brackets ``[label]`` or from the PR's applied labels.
-        Drive prompt-role selection later in the module.
-    dedup_key (str): A stable identifier (e.g. ``"PR #42"`` or
-        ``"commit:a1b2c3d"``) embedded in every generated issue body so that
-        duplicate issues can be detected on subsequent runs.
-    pr_ref (github.PullRequest.PullRequest | None): A live PyGithub pull
-        request object retained for posting the summary comment, or ``None``
-        when the triggering event is a push.
+Environment:
+    GITHUB_TOKEN: Token used for the GitHub API (provided by Actions).
+    GH_MODELS_TOKEN: Bearer token for the hosted inference endpoint.
+    REPOSITORY: Target repository in ``owner/name`` form.
+    EVENT_NAME: ``push`` or ``pull_request``.
+    COMMIT_SHA: Head commit of the event; used for permalinks.
+    PR_NUMBER: Pull request number; required for ``pull_request`` events.
+    ALLOWED_USER: Comma-separated logins permitted to trigger the script.
+    GITHUB_ACTOR: Login of the actor that triggered the run.
 """
 
-import os
+from __future__ import annotations
+
 import json
+import os
 import re
+import sys
 import time
+from dataclasses import dataclass
+from typing import Final, Iterable, Mapping
+from urllib.parse import quote
+
 import requests
-from github import Github, Auth
+from github import Auth, Github, GithubException
+from github.Commit import Commit
+from github.PullRequest import PullRequest
+from github.Repository import Repository
 
-# ---------------------------------------------------------------------------
-# Environment — read once at module level so all functions share the values.
-# ---------------------------------------------------------------------------
-gh_token = os.environ.get("GITHUB_TOKEN")
-model_token = os.environ.get("GH_MODELS_TOKEN")
-repo_name = os.environ.get("REPOSITORY")
-event_name = os.environ.get("EVENT_NAME")
-allowed_users = [u.strip().lower() for u in os.environ.get("ALLOWED_USER", "").split(",")]
+MODEL_NAME: Final = "Llama-3.3-70B-Instruct"
+MODEL_ENDPOINT: Final = "https://models.inference.ai.azure.com/chat/completions"
+REQUEST_TIMEOUT_SECONDS: Final = 60
+MODEL_ATTEMPTS: Final = 3
+RETRY_DELAY_SECONDS: Final = 5
 
-MODEL_NAME = "Llama-3.3-70B-Instruct"
-ENDPOINT = "https://models.inference.ai.azure.com/chat/completions"
+#: Diff budget per event type, in characters. Pushes cover a single commit and
+#: stay small; pull requests can legitimately carry a much larger change set.
+DIFF_LIMIT_PUSH: Final = 10_000
+DIFF_LIMIT_PULL_REQUEST: Final = 80_000
 
-# Authenticate once; the ``repo`` object is reused throughout.
-auth = Auth.Token(gh_token)
-gh = Github(auth=auth)
-repo = gh.get_repo(repo_name)
+#: A change set shorter than this carries no reviewable information.
+MIN_DIFF_CHARS: Final = 50
 
-# ---------------------------------------------------------------------------
-# Mutable state populated by the event-routing block below.
-# ---------------------------------------------------------------------------
-diff_text = ""
-event_context = ""
-author_login = ""
-trigger_labels = []
-dedup_key = ""
-pr_ref = None
-changed_files = []
+#: Placeholder the model is asked to emit so the script can substitute a
+#: permalink once the head commit is known.
+PERMALINK_PLACEHOLDER: Final = "PUT_PERMALINK_HERE"
 
-# ---------------------------------------------------------------------------
-# Event routing — collect the diff and metadata for push vs pull_request.
-# ---------------------------------------------------------------------------
-if event_name == "push":
-    commit_sha = os.environ.get("COMMIT_SHA")
-    commit = repo.get_commit(commit_sha)
+_CODE_FENCE_PATTERN = re.compile(r"^```(?:json)?\s*|\s*```$", re.IGNORECASE)
+_PR_REFERENCE_PATTERN = re.compile(r"\(#(\d+)\)")
+_BRACKET_LABEL_PATTERN = re.compile(r"\[(.*?)\]")
 
-    actor_login = os.environ.get("GITHUB_ACTOR", "").strip().lower()
-    if actor_login not in allowed_users:
-        print(f"Action performed by {actor_login}, not in allowed list. Skipping.")
-        exit(0)
+SEVERITY_GUIDE = """\
+Use the following severity scale. You have 7 levels -- pick the one that best \
+matches the ACTUAL impact:
 
-    pr_match = re.search(r'\(#(\d+)\)', commit.commit.message)
-    if pr_match:
-        dedup_key = f"PR #{pr_match.group(1)}"
-    else:
-        dedup_key = f"commit:{commit_sha[:7]}"
+CRITICAL -- Production-breaking changes, security vulnerabilities (exposed \
+secrets, SQL injection, XSS, CSRF, broken auth), data loss risks, or changes that \
+could cause service outages.
 
-    event_context = f"Commit Message: {commit.commit.message}"
-    trigger_labels = [m.lower() for m in re.findall(r'\[(.*?)\]', commit.commit.message)]
+HIGH -- Significant logic changes affecting core functionality, new or modified \
+API endpoints, permission and access control modifications, database schema \
+changes, removal of important functionality, breaking changes to public interfaces.
 
-    for file in commit.files:
-        changed_files.append(file.filename)
-        diff_text += f"File: {file.filename}\nPatch:\n{file.patch}\n\n"
-        if len(diff_text) > 10000:
-            diff_text += "\n[Diff truncated...]"
-            break
+ELEVATED -- New substantial features or modules, large-scale refactors that change \
+behavior across multiple files, integration with external services or APIs, changes \
+to error handling or retry logic, modifications to data processing pipelines.
 
-elif event_name == "pull_request":
-    pr_number = int(os.environ.get("PR_NUMBER"))
-    pr = repo.get_pull(pr_number)
-    author_login = pr.user.login.strip().lower()
-    if author_login not in allowed_users:
-        exit(0)
+MEDIUM -- New utility functions or helpers, workflow and CI/CD pipeline changes, \
+configuration changes that affect runtime behavior, dependency version updates, \
+adding new files with meaningful functionality, structural reorganization of \
+existing code.
 
-    pr_ref = pr
-    dedup_key = f"PR #{pr_number}"
-    event_context = f"PR Title: {pr.title}\nPR Body: {pr.body}"
-    trigger_labels = [label.name.lower() for label in pr.labels]
+MODERATE -- Minor feature additions, small behavioral changes, adding validation or \
+input checks, improving logging or error messages, updating environment variables or \
+build settings, adding new labels or issue templates.
 
-    for file in pr.get_files():
-        changed_files.append(file.filename)
-        diff_text += f"File: {file.filename}\nPatch:\n{file.patch}\n\n"
-        if len(diff_text) > 80000:
-            diff_text += "\n[Diff truncated...]"
-            break
-else:
-    exit(0)
+LOW -- Documentation updates (README, CONTRIBUTING, comments), cosmetic UI changes \
+without behavior impact, code formatting or style fixes, renaming without behavior \
+change, adding badges or metadata, updating .gitignore or editor configs.
 
-if len(diff_text.strip()) < 50:
-    print("Diff too small to analyze. Skipping.")
-    exit(0)
+INFORMATIONAL -- Trivial changes: fixing typos, whitespace adjustments, comment \
+rewording, version bumps in non-critical files, adding blank lines.
 
-for issue in repo.get_issues(state="all"):
-    if dedup_key in (issue.body or ""):
-        print(f"Issue for {dedup_key} already exists (#{issue.number}), skipping.")
-        exit(0)
-
-
-def was_already_closed(title_keyword: str) -> bool:
-    """Return whether a similar issue title already exists in closed issues."""
-    for issue in repo.get_issues(state="closed"):
-        if title_keyword.lower() in (issue.title or "").lower():
-            print(f"Similar closed issue found: #{issue.number} — skipping.")
-            return True
-    return False
-
-
-def build_permalink(filename: str, line: int = 1) -> str:
-    """Build a GitHub blob permalink for a file and line number."""
-    sha = os.environ.get("COMMIT_SHA") or ""
-    if not sha and pr_ref:
-        sha = pr_ref.head.sha
-    return f"https://github.com/{repo_name}/blob/{sha}/{filename}#L{line}"
-
-
-# ---------------------------------------------------------------------------
-# Auto-detection of change type from file paths and diff content.
-# Used when no explicit labels are provided in commit message or PR.
-# ---------------------------------------------------------------------------
-def detect_change_type(files: list, diff: str, context: str) -> str:
-    """Determine the analysis role based on changed file paths and diff content.
-
-    Inspects the list of changed files and diff text to infer what kind of
-    review is most appropriate. Returns a role key that maps to a specific
-    prompt persona.
-
-    Args:
-        files: List of changed file paths.
-        diff: The accumulated diff text.
-        context: Commit message or PR title/body.
-
-    Returns:
-        A string role key: "security", "deps", "ci", "docs", "frontend",
-        "backend", "config", or "general".
-    """
-    files_lower = [f.lower() for f in files]
-    diff_lower = diff.lower()
-
-    has_security_keywords = any(kw in diff_lower for kw in [
-        "secret", "token", "password", "api_key", "apikey", "auth",
-        "credential", "private_key", "access_key", "bearer",
-        "vulnerability", "cve-", "injection", "xss", "csrf",
-    ])
-    has_security_files = any(f for f in files_lower if any(kw in f for kw in [
-        "security", "auth", ".env", "secret",
-    ]))
-    if has_security_keywords or has_security_files:
-        return "security"
-
-    has_dep_files = any(f for f in files_lower if any(kw in f for kw in [
-        "requirements", "package.json", "package-lock", "pipfile",
-        "poetry.lock", "cargo.toml", "go.sum", "gemfile",
-        "dependabot", "renovate",
-    ]))
-    if has_dep_files:
-        return "deps"
-
-    has_ci_files = any(f for f in files_lower if any(kw in f for kw in [
-        ".github/workflows/", "jenkinsfile", ".gitlab-ci",
-        ".circleci", "dockerfile", "docker-compose",
-        ".github/actions/",
-    ]))
-    if has_ci_files:
-        return "ci"
-
-    has_doc_files = all(
-        any(kw in f for kw in [
-            "readme", "contributing", "changelog", "license",
-            "docs/", "doc/", ".md", ".rst", ".txt",
-        ])
-        for f in files_lower
-    )
-    if has_doc_files and files_lower:
-        return "docs"
-
-    has_frontend_files = any(f for f in files_lower if any(kw in f for kw in [
-        ".html", ".css", ".jsx", ".tsx", ".vue", ".svelte",
-        "frontend/", "public/", "static/", "assets/",
-    ]))
-    has_frontend_keywords = any(kw in diff_lower for kw in [
-        "classname", "style=", "onclick", "addeventlistener",
-        "document.get", "innerhtml", "appendchild",
-    ])
-    if has_frontend_files or has_frontend_keywords:
-        return "frontend"
-
-    has_backend_files = any(f for f in files_lower if any(kw in f for kw in [
-        ".py", ".go", ".java", ".rb", ".rs", ".php",
-        "api/", "server/", "backend/", "lib/", "src/",
-    ]))
-    if has_backend_files:
-        return "backend"
-
-    has_config_files = any(f for f in files_lower if any(kw in f for kw in [
-        ".yml", ".yaml", ".toml", ".ini", ".cfg", ".conf",
-        ".json", ".env",
-    ]))
-    if has_config_files:
-        return "config"
-
-    return "general"
-
-
-# ---------------------------------------------------------------------------
-# Severity guidance shared across all prompt roles.
-# ---------------------------------------------------------------------------
-severity_guide = """
-Use the following severity scale. You have 7 levels — pick the one that best matches the ACTUAL impact:
-
-CRITICAL — Production-breaking changes, security vulnerabilities (exposed secrets, SQL injection, XSS, CSRF, broken auth), data loss risks, or changes that could cause service outages.
-
-HIGH — Significant logic changes affecting core functionality, new or modified API endpoints, permission and access control modifications, database schema changes, removal of important functionality, breaking changes to public interfaces.
-
-ELEVATED — New substantial features or modules, large-scale refactors that change behavior across multiple files, integration with external services or APIs, changes to error handling or retry logic, modifications to data processing pipelines.
-
-MEDIUM — New utility functions or helpers, workflow and CI/CD pipeline changes, configuration changes that affect runtime behavior, dependency version updates, adding new files with meaningful functionality, structural reorganization of existing code.
-
-MODERATE — Minor feature additions, small behavioral changes, adding validation or input checks, improving logging or error messages, updating environment variables or build settings, adding new labels or issue templates.
-
-LOW — Documentation updates (README, CONTRIBUTING, comments), cosmetic UI changes without behavior impact, code formatting or style fixes, renaming without behavior change, adding badges or metadata, updating .gitignore or editor configs.
-
-INFORMATIONAL — Trivial changes: fixing typos, whitespace adjustments, comment rewording, version bumps in non-critical files, adding blank lines.
-
-IMPORTANT: Do NOT default to LOW or INFORMATIONAL. Carefully evaluate the actual scope and impact. Most code changes that add or modify functionality should be MEDIUM or higher. Use the full range of the scale.
+IMPORTANT: Do NOT default to LOW or INFORMATIONAL. Carefully evaluate the actual \
+scope and impact. Most code changes that add or modify functionality should be \
+MEDIUM or higher. Use the full range of the scale.
 """
 
-# ---------------------------------------------------------------------------
-# Structured output contract sent to the model.
-# ---------------------------------------------------------------------------
-base_instructions = """
-Return only a raw JSON object with no markdown formatting. The JSON must have these exact keys:
+OUTPUT_CONTRACT = """\
+Return only a raw JSON object with no markdown formatting. The JSON must have \
+these exact keys:
 
-"issue_title": string — include severity prefix like [CRITICAL], [HIGH], [ELEVATED], [MEDIUM], [MODERATE], [LOW], or [INFO] at the start,
-"severity": string — one of: critical, high, elevated, medium, moderate, low, informational,
-"issue_body": string — must include these sections:
+"issue_title": string -- include a severity prefix like [CRITICAL], [HIGH], \
+[ELEVATED], [MEDIUM], [MODERATE], [LOW], or [INFO] at the start,
+"severity": string -- one of: critical, high, elevated, medium, moderate, low, \
+informational,
+"issue_body": string -- must include these sections:
   ## Problem
   (clear description with exact file paths and line numbers if known)
 
@@ -284,23 +113,24 @@ Return only a raw JSON object with no markdown formatting. The JSON must have th
   (the exact problematic code snippet or the key changed code)
 
   ## Suggested Fix
-  (concrete code or steps to fix — or "No action required" for informational changes)
+  (concrete code or steps to fix -- or "No action required" for informational \
+changes)
 
   ## Permalink
-  (placeholder: PUT_PERMALINK_HERE — will be replaced automatically)
+  (placeholder: PUT_PERMALINK_HERE -- will be replaced automatically)
 
-"labels": list of strings — standard GitHub labels plus the severity level,
-"affected_file": string — the most relevant filename from the diff (or "" if unknown),
-"affected_line": integer — approximate line number of the issue (or 1 if unknown),
-"summary": string — 2-3 sentence plain-English summary for the PR comment
+"labels": list of strings -- standard GitHub labels plus the severity level,
+"affected_file": string -- the most relevant filename from the diff (or "" if \
+unknown),
+"affected_line": integer -- approximate line number of the issue (or 1 if unknown),
+"summary": string -- 2-3 sentence plain-English summary for the pull request comment
 
 The issue_title, issue_body and summary MUST be written entirely in English.
 """
 
-# ---------------------------------------------------------------------------
-# Prompt role definitions — keyed by label match or auto-detected type.
-# ---------------------------------------------------------------------------
-PROMPT_ROLES = {
+#: Review personas keyed by role. The label map below resolves user labels onto
+#: these keys; ``general`` is the fallback persona.
+PROMPT_ROLES: Final[Mapping[str, str]] = {
     "security": (
         "Act as a Strict Security Auditor. Perform a deep security audit "
         "(OWASP Top 10, CWE patterns). Find real vulnerabilities with exact "
@@ -319,7 +149,7 @@ PROMPT_ROLES = {
     ),
     "perf": (
         "Act as a Performance Expert. Analyze algorithmic complexity, identify "
-        "O(n²) patterns, unnecessary allocations, N+1 queries, blocking I/O, "
+        "O(n^2) patterns, unnecessary allocations, N+1 queries, blocking I/O, "
         "and missed caching opportunities. Reference exact lines."
     ),
     "pm": (
@@ -379,8 +209,8 @@ PROMPT_ROLES = {
     ),
 }
 
-# Maps commit-message bracket labels and PR labels to role keys.
-LABEL_TO_ROLE = {
+#: Maps commit-message brackets and pull request labels onto role keys.
+LABEL_TO_ROLE: Final[Mapping[str, str]] = {
     "sec": "security", "security": "security", "audit": "security",
     "review": "review", "refactor": "review", "code-review": "review",
     "qa": "qa", "test": "qa", "testing": "qa",
@@ -395,113 +225,432 @@ LABEL_TO_ROLE = {
     "config": "config", "infra": "config", "infrastructure": "config",
 }
 
-# ---------------------------------------------------------------------------
-# Prompt routing — label match first, then auto-detect from diff content.
-# ---------------------------------------------------------------------------
-role_key = None
-for label in trigger_labels:
-    if label in LABEL_TO_ROLE:
-        role_key = LABEL_TO_ROLE[label]
-        break
-
-if not role_key:
-    role_key = detect_change_type(changed_files, diff_text, event_context)
-    print(f"Auto-detected change type: {role_key}")
-
-role_instruction = PROMPT_ROLES.get(role_key, PROMPT_ROLES["general"])
-
-prompt = f"""{role_instruction}
-
-Do NOT invent problems that do not exist in the diff. Base your analysis strictly on what you see.
-{severity_guide}
-Context: {event_context}
-Changed files: {', '.join(changed_files)}
-Changes: {diff_text}
-{base_instructions}"""
-
-
-def call_model(prompt: str, retries: int = 3, delay: int = 5) -> dict:
-    """Send a review prompt to the hosted model and parse the JSON reply."""
-    headers = {
-        "Content-Type": "application/json",
-        "Authorization": f"Bearer {model_token}"
-    }
-    payload = {
-        "messages": [
-            {"role": "system", "content": "You are a professional software auditor. Always return valid JSON only. No markdown, no explanation, just the JSON object."},
-            {"role": "user", "content": prompt}
-        ],
-        "model": MODEL_NAME,
-        "temperature": 0.1
-    }
-
-    for attempt in range(retries):
-        try:
-            resp = requests.post(ENDPOINT, headers=headers, json=payload, timeout=60)
-            resp.raise_for_status()
-            data = resp.json()
-            raw = data['choices'][0]['message']['content'].strip()
-            raw = re.sub(r'^```json\s*|```$', '', raw, flags=re.MULTILINE).strip()
-            return json.loads(raw)
-        except Exception as e:
-            print(f"Attempt {attempt + 1} failed: {e}")
-            if attempt < retries - 1:
-                time.sleep(delay)
-
-    print("All attempts failed. Exiting gracefully.")
-    exit(0)
-
-
-# ---------------------------------------------------------------------------
-# Main execution — call the model and post the results to GitHub.
-# ---------------------------------------------------------------------------
-
-result = call_model(prompt)
-
-title_keyword = result.get("issue_title", "")[:40]
-if was_already_closed(title_keyword):
-    exit(0)
-
-affected_file = result.get("affected_file", "")
-affected_line = result.get("affected_line", 1)
-
-if affected_file:
-    permalink = build_permalink(affected_file, affected_line)
-    issue_body = result["issue_body"].replace("PUT_PERMALINK_HERE", permalink)
-else:
-    issue_body = result["issue_body"].replace("PUT_PERMALINK_HERE", "_No specific file identified_")
-
-actor_name = os.environ.get("GITHUB_ACTOR", "unknown")
-footer = f"\n\n---\n*Generated from {dedup_key} | Auto-detected role: `{role_key}` | Processed by actor: {actor_name}*"
-
-severity = result.get("severity", "medium").lower()
-severity_label_map = {
-    "critical":      "severity: critical",
-    "high":          "severity: high",
-    "elevated":      "severity: elevated",
-    "medium":        "severity: medium",
-    "moderate":      "severity: moderate",
-    "low":           "severity: low",
+SEVERITY_LABELS: Final[Mapping[str, str]] = {
+    "critical": "severity: critical",
+    "high": "severity: high",
+    "elevated": "severity: elevated",
+    "medium": "severity: medium",
+    "moderate": "severity: moderate",
+    "low": "severity: low",
     "informational": "severity: informational",
 }
-extra_labels = [severity_label_map.get(severity, "severity: medium")]
-all_labels = list(set(result.get("labels", []) + extra_labels))
 
-issue = repo.create_issue(
-    title=result["issue_title"],
-    body=issue_body + footer,
-    labels=all_labels
+#: File-name and content markers used to infer the review persona when the
+#: change set carries no recognisable label.
+_CHANGE_CLASSIFIERS: Final = (
+    (
+        "security",
+        (
+            "secret", "token", "password", "api_key", "apikey", "auth",
+            "credential", "private_key", "access_key", "bearer",
+            "vulnerability", "cve-", "injection", "xss", "csrf",
+        ),
+        ("security", "auth", ".env", "secret"),
+    ),
+    (
+        "deps",
+        (),
+        (
+            "requirements", "package.json", "package-lock", "pipfile",
+            "poetry.lock", "cargo.toml", "go.sum", "gemfile",
+            "dependabot", "renovate",
+        ),
+    ),
+    (
+        "ci",
+        (),
+        (
+            ".github/workflows/", "jenkinsfile", ".gitlab-ci",
+            ".circleci", "dockerfile", "docker-compose", ".github/actions/",
+        ),
+    ),
+    (
+        "frontend",
+        ("classname", "style=", "onclick", "addeventlistener", "document.get", "innerhtml", "appendchild"),
+        (".html", ".css", ".jsx", ".tsx", ".vue", ".svelte", "frontend/", "public/", "static/", "assets/"),
+    ),
+    (
+        "backend",
+        (),
+        (".py", ".go", ".java", ".rb", ".rs", ".php", "api/", "server/", "backend/", "lib/", "src/"),
+    ),
+    (
+        "config",
+        (),
+        (".yml", ".yaml", ".toml", ".ini", ".cfg", ".conf", ".json", ".env"),
+    ),
 )
-print(f"Created issue #{issue.number}: {issue.title}")
 
-if pr_ref:
-    summary = result.get("summary", "")
-    if summary:
-        pr_comment = (
+_DOCUMENTATION_MARKERS: Final = (
+    "readme", "contributing", "changelog", "license", "docs/", "doc/", ".md", ".rst", ".txt",
+)
+
+
+@dataclass(frozen=True)
+class Settings:
+    """Runtime configuration resolved from the environment."""
+
+    github_token: str
+    models_token: str
+    repository: str
+    event_name: str
+    commit_sha: str
+    pull_number: int | None
+    allowed_users: frozenset[str]
+    actor: str
+
+    @classmethod
+    def from_environment(cls) -> "Settings":
+        event_name = _require_env("EVENT_NAME")
+        pull_number = os.environ.get("PR_NUMBER", "").strip()
+
+        return cls(
+            github_token=_require_env("GITHUB_TOKEN"),
+            models_token=_require_env("GH_MODELS_TOKEN"),
+            repository=_require_env("REPOSITORY"),
+            event_name=event_name,
+            commit_sha=os.environ.get("COMMIT_SHA", "").strip(),
+            pull_number=int(pull_number) if pull_number else None,
+            allowed_users=_parse_logins(os.environ.get("ALLOWED_USER", "")),
+            actor=os.environ.get("GITHUB_ACTOR", "").strip().lower(),
+        )
+
+
+@dataclass(frozen=True)
+class ChangeSet:
+    """Everything the review needs to know about the triggering change."""
+
+    diff: str
+    changed_files: tuple[str, ...]
+    context: str
+    labels: tuple[str, ...]
+    dedup_key: str
+
+
+def _require_env(name: str) -> str:
+    """Return a mandatory environment variable, or abort with a clear message."""
+    value = os.environ.get(name, "").strip()
+    if not value:
+        raise SystemExit(f"Required environment variable {name} is not set.")
+    return value
+
+
+def _parse_logins(raw: str) -> frozenset[str]:
+    """Normalise a comma-separated login list to a case-insensitive set."""
+    logins = (item.strip().lower() for item in raw.split(","))
+    return frozenset(login for login in logins if login)
+
+
+def _accumulate_diff(changes: Iterable[tuple[str, str | None]], limit: int) -> tuple[str, tuple[str, ...]]:
+    """Flatten ``(filename, patch)`` pairs into a prompt fragment.
+
+    Files without a textual patch (binary assets, pure renames) are annotated
+    instead of being rendered as ``None``, and the accumulation stops at ``limit``
+    characters so a large change set cannot exhaust the model context.
+    """
+    fragments: list[str] = []
+    filenames: list[str] = []
+    total = 0
+
+    for filename, patch in changes:
+        filenames.append(filename)
+        fragment = f"File: {filename}\nPatch:\n{patch or '[no textual diff available]'}\n\n"
+        fragments.append(fragment)
+        total += len(fragment)
+
+        if total >= limit:
+            fragments.append("[Diff truncated: size limit reached.]\n")
+            break
+
+    return "".join(fragments), tuple(filenames)
+
+
+def collect_push_change_set(repository: Repository, settings: Settings) -> ChangeSet | None:
+    """Build the change set for a push event, or ``None`` when not allow-listed."""
+    if settings.actor not in settings.allowed_users:
+        print(f"Actor {settings.actor!r} is not allow-listed; skipping.")
+        return None
+
+    commit: Commit = repository.get_commit(settings.commit_sha)
+    message = commit.commit.message
+
+    reference = _PR_REFERENCE_PATTERN.search(message)
+    dedup_key = f"PR #{reference.group(1)}" if reference else f"commit:{settings.commit_sha[:7]}"
+
+    diff, files = _accumulate_diff(
+        ((item.filename, item.patch) for item in commit.files),
+        DIFF_LIMIT_PUSH,
+    )
+
+    return ChangeSet(
+        diff=diff,
+        changed_files=files,
+        context=f"Commit Message: {message}",
+        labels=tuple(match.lower() for match in _BRACKET_LABEL_PATTERN.findall(message)),
+        dedup_key=dedup_key,
+    )
+
+
+def collect_pull_request_change_set(repository: Repository, settings: Settings) -> tuple[ChangeSet | None, PullRequest | None]:
+    """Build the change set for a pull request event.
+
+    Returns the change set together with the pull request handle, which is reused
+    later to post the summary comment. Both are ``None`` when the author is not
+    allow-listed.
+    """
+    if settings.pull_number is None:
+        raise SystemExit("PR_NUMBER is required for pull_request events.")
+
+    pull = repository.get_pull(settings.pull_number)
+    author = pull.user.login.strip().lower()
+
+    if author not in settings.allowed_users:
+        print(f"Pull request author {author!r} is not allow-listed; skipping.")
+        return None, None
+
+    diff, files = _accumulate_diff(
+        ((item.filename, item.patch) for item in pull.get_files()),
+        DIFF_LIMIT_PULL_REQUEST,
+    )
+
+    change_set = ChangeSet(
+        diff=diff,
+        changed_files=files,
+        context=f"PR Title: {pull.title}\nPR Body: {pull.body or ''}",
+        labels=tuple(label.name.lower() for label in pull.labels),
+        dedup_key=f"PR #{settings.pull_number}",
+    )
+    return change_set, pull
+
+
+def detect_change_type(files: Iterable[str], diff: str) -> str:
+    """Infer the review persona from changed paths and diff content.
+
+    Labels always win over inference; this is the fallback for change sets that
+    arrive without one. Documentation-only change sets are recognised first
+    because a docs patch frequently also touches ``.json`` or ``.py`` paths.
+    """
+    lowered_files = [name.lower() for name in files]
+    lowered_diff = diff.lower()
+
+    if lowered_files and all(
+        any(marker in name for marker in _DOCUMENTATION_MARKERS) for name in lowered_files
+    ):
+        return "docs"
+
+    for role, content_markers, file_markers in _CHANGE_CLASSIFIERS:
+        if any(marker in lowered_diff for marker in content_markers):
+            return role
+        if any(marker in name for name in lowered_files for marker in file_markers):
+            return role
+
+    return "general"
+
+
+def select_role(labels: Iterable[str], files: Iterable[str], diff: str) -> str:
+    """Resolve the review persona from the first recognised label, else heuristics."""
+    for label in labels:
+        role = LABEL_TO_ROLE.get(label.strip().lower())
+        if role is not None:
+            return role
+
+    detected = detect_change_type(files, diff)
+    print(f"Auto-detected change type: {detected}")
+    return detected
+
+
+def build_prompt(role: str, change_set: ChangeSet) -> str:
+    """Assemble the review prompt for a persona and a change set."""
+    return (
+        f"{PROMPT_ROLES[role]}\n\n"
+        "Do NOT invent problems that do not exist in the diff. "
+        "Base your analysis strictly on what you see.\n"
+        f"{SEVERITY_GUIDE}\n"
+        f"Context: {change_set.context}\n"
+        f"Changed files: {', '.join(change_set.changed_files)}\n"
+        f"Changes: {change_set.diff}\n"
+        f"{OUTPUT_CONTRACT}"
+    )
+
+
+def call_model(prompt: str, token: str, attempts: int = MODEL_ATTEMPTS) -> dict | None:
+    """Request the structured report, retrying transient failures.
+
+    Returns ``None`` once the retry budget is exhausted so the caller can exit
+    cleanly; a malformed reply is treated the same way as a transport error.
+    """
+    payload = {
+        "messages": [
+            {
+                "role": "system",
+                "content": (
+                    "You are a professional software auditor. Always return valid JSON only. "
+                    "No markdown, no explanation, just the JSON object."
+                ),
+            },
+            {"role": "user", "content": prompt},
+        ],
+        "model": MODEL_NAME,
+        "temperature": 0.1,
+    }
+    headers = {"Content-Type": "application/json", "Authorization": f"Bearer {token}"}
+
+    for attempt in range(1, attempts + 1):
+        try:
+            response = requests.post(MODEL_ENDPOINT, headers=headers, json=payload, timeout=REQUEST_TIMEOUT_SECONDS)
+            response.raise_for_status()
+            raw = response.json()["choices"][0]["message"]["content"].strip()
+            return json.loads(_CODE_FENCE_PATTERN.sub("", raw))
+        except (requests.RequestException, KeyError, IndexError, ValueError) as error:
+            print(f"Attempt {attempt}/{attempts} failed: {error}")
+            if attempt < attempts:
+                # Linear backoff: enough to ride out a transient upstream hiccup
+                # without keeping the job alive for long.
+                time.sleep(RETRY_DELAY_SECONDS * attempt)
+
+    return None
+
+
+def find_existing_issue(repository: Repository, dedup_key: str) -> int | None:
+    """Return the number of an issue already documenting ``dedup_key``."""
+    for issue in repository.get_issues(state="all"):
+        if dedup_key in (issue.body or ""):
+            return issue.number
+    return None
+
+
+def find_closed_issue_by_title(repository: Repository, title_keyword: str) -> int | None:
+    """Return the number of a closed issue whose title contains ``title_keyword``."""
+    if not title_keyword:
+        return None
+
+    for issue in repository.get_issues(state="closed"):
+        if title_keyword.lower() in (issue.title or "").lower():
+            return issue.number
+    return None
+
+
+def _as_line_number(value: object) -> int:
+    """Coerce the model-reported line number to a positive integer, else 1."""
+    try:
+        line = int(float(str(value).strip()))
+    except (TypeError, ValueError):
+        return 1
+    return line if line > 0 else 1
+
+
+def build_permalink(repository_name: str, commit_sha: str, filename: str, line: object) -> str:
+    """Build a GitHub blob permalink for a file and line.
+
+    The filename and line originate from the model's reply, so both are
+    sanitised before being embedded in a URL: a path is percent-encoded and the
+    line is coerced to a positive integer.
+    """
+    safe_path = quote(filename.strip().lstrip("/"), safe="/")
+    return f"https://github.com/{repository_name}/blob/{commit_sha}/{safe_path}#L{_as_line_number(line)}"
+
+
+def publish_report(
+    repository: Repository,
+    report: Mapping,
+    change_set: ChangeSet,
+    settings: Settings,
+    role: str,
+    pull: PullRequest | None,
+) -> int:
+    """Create the triage issue, then optionally post the PR summary comment.
+
+    Returns the created issue number.
+    """
+    affected_file = str(report.get("affected_file") or "").strip()
+    affected_line = _as_line_number(report.get("affected_line"))
+    permalink = (
+        build_permalink(settings.repository, settings.commit_sha, affected_file, affected_line)
+        if affected_file and settings.commit_sha
+        else "_No specific file identified_"
+    )
+
+    issue_body = str(report.get("issue_body", "")).replace(PERMALINK_PLACEHOLDER, permalink)
+    severity = str(report.get("severity", "medium")).lower()
+    severity_label = SEVERITY_LABELS.get(severity, SEVERITY_LABELS["medium"])
+
+    requested_labels = [str(label) for label in report.get("labels") or []]
+    footer = (
+        f"\n\n---\n*Generated from {change_set.dedup_key} | "
+        f"Auto-detected role: `{role}` | Processed by actor: {settings.actor or 'unknown'}*"
+    )
+
+    issue = repository.create_issue(
+        title=str(report.get("issue_title", "")).strip() or f"Triage report for {change_set.dedup_key}",
+        body=issue_body + footer,
+        labels=sorted({*requested_labels, severity_label}),
+    )
+    print(f"Created issue #{issue.number}: {issue.title}")
+
+    summary = str(report.get("summary", "")).strip()
+    if pull is not None and summary:
+        pull.create_issue_comment(
             f"### AI Analysis Summary\n\n"
             f"{summary}\n\n"
-            f"**Severity:** `{severity.upper()}` | **Role:** `{role_key}`\n\n"
+            f"**Severity:** `{severity.upper()}` | **Role:** `{role}`\n\n"
             f"Full details: #{issue.number}"
         )
-        pr_ref.create_issue_comment(pr_comment)
-        print(f"Posted summary comment to PR #{pr_ref.number}")
+        print(f"Posted summary comment to PR #{pull.number}")
+
+    return issue.number
+
+
+def main() -> int:
+    settings = Settings.from_environment()
+
+    if settings.event_name not in {"push", "pull_request"}:
+        print(f"Event {settings.event_name!r} is not handled; skipping.")
+        return 0
+
+    github = Github(auth=Auth.Token(settings.github_token))
+    repository = github.get_repo(settings.repository)
+
+    if settings.event_name == "push" and not settings.commit_sha:
+        raise SystemExit("COMMIT_SHA is required for push events.")
+
+    pull: PullRequest | None = None
+    if settings.event_name == "push":
+        change_set = collect_push_change_set(repository, settings)
+    else:
+        change_set, pull = collect_pull_request_change_set(repository, settings)
+
+    if change_set is None:
+        return 0
+
+    if len(change_set.diff.strip()) < MIN_DIFF_CHARS:
+        print("Diff too small to analyze; skipping.")
+        return 0
+
+    existing_issue = find_existing_issue(repository, change_set.dedup_key)
+    if existing_issue is not None:
+        print(f"Issue for {change_set.dedup_key} already exists (#{existing_issue}); skipping.")
+        return 0
+
+    role = select_role(change_set.labels, change_set.changed_files, change_set.diff)
+    report = call_model(build_prompt(role, change_set), settings.models_token)
+
+    if report is None:
+        print("The model produced no usable report; skipping.")
+        return 0
+
+    closed_match = find_closed_issue_by_title(repository, str(report.get("issue_title", ""))[:40])
+    if closed_match is not None:
+        print(f"Similar closed issue found (#{closed_match}); skipping.")
+        return 0
+
+    try:
+        publish_report(repository, report, change_set, settings, role, pull)
+    except GithubException as error:
+        print(f"Failed to publish the report: {error}", file=sys.stderr)
+        return 1
+
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
