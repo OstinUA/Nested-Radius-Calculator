@@ -15,7 +15,7 @@ body:
       options:
         - label: I have checked existing open and closed issues for duplicates.
           required: true
-        - label: I am using the latest version of the action/script.
+        - label: I am using the latest version of the site or automation scripts.
           required: true
 
   - type: textarea
@@ -34,7 +34,7 @@ body:
       description: Provide a clear, step-by-step algorithm to trigger the bug.
       placeholder: |
         1. Push commit with the following payload...
-        2. Action triggers process_event.py...
+        2. Workflow runs trigger_action.py...
         3. Fails with error...
     validations:
       required: true

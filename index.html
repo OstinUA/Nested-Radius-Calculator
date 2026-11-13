@@ -3,9 +3,13 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="Calculate visually correct nested corner radii from an outer radius and a padding value.">
+    <meta name="color-scheme" content="light">
     <title>Corner Radius Calculator</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap">
     <link rel="stylesheet" href="style.css">
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
 </head>
 <body>
 
@@ -14,7 +18,7 @@
             <select id="langSelect" aria-label="Language selector"></select>
         </div>
 
-        <header class="formula-bar">
+        <header class="formula-bar" aria-hidden="true">
             <div class="pill pill-inner" data-i18n="pill_inner">Inner</div>
             <span class="operator">+</span>
             <div class="pill pill-padding" data-i18n="pill_padding">Padding</div>
@@ -25,41 +29,44 @@
         <h1 class="main-title" data-i18n="title">Corner Radius Calculator</h1>
 
         <div class="calculator-grid">
-            <section class="controls">
-                
+            <section class="controls" aria-label="Radius parameters">
+
                 <div class="input-group">
-                    <label>
-                        <span class="dot dot-outer"></span> <span data-i18n="label_outer">Outer Radius</span>
+                    <label for="outerInput">
+                        <span class="dot dot-outer" aria-hidden="true"></span>
+                        <span data-i18n="label_outer">Outer Radius</span>
                     </label>
                     <div class="input-wrapper">
-                        <input type="number" id="outerInput" value="40" min="0">
-                        <span class="unit">px</span>
+                        <input type="number" id="outerInput" value="40" min="0" step="1" inputmode="numeric" autocomplete="off">
+                        <span class="unit" aria-hidden="true">px</span>
                     </div>
-                    <input type="range" id="outerRange" min="0" max="200" value="40" class="slider slider-outer">
+                    <input type="range" id="outerRange" min="0" max="200" value="40" class="slider slider-outer" aria-label="Outer radius (slider)">
                 </div>
 
                 <div class="input-group">
-                    <label>
-                        <span class="dot dot-padding"></span> <span data-i18n="label_padding">Padding</span>
+                    <label for="paddingInput">
+                        <span class="dot dot-padding" aria-hidden="true"></span>
+                        <span data-i18n="label_padding">Padding</span>
                     </label>
                     <div class="input-wrapper">
-                        <input type="number" id="paddingInput" value="10" min="0">
-                        <span class="unit">px</span>
+                        <input type="number" id="paddingInput" value="10" min="0" step="1" inputmode="numeric" autocomplete="off">
+                        <span class="unit" aria-hidden="true">px</span>
                     </div>
-                    <input type="range" id="paddingRange" min="0" max="100" value="10" class="slider slider-padding">
+                    <input type="range" id="paddingRange" min="0" max="100" value="10" class="slider slider-padding" aria-label="Padding (slider)">
                 </div>
 
-                <div class="divider"></div>
+                <div class="divider" role="presentation"></div>
 
                 <div class="input-group">
-                    <label>
-                        <span class="dot dot-inner"></span> <span data-i18n="label_inner">Inner Radius</span>
+                    <label for="innerInput">
+                        <span class="dot dot-inner" aria-hidden="true"></span>
+                        <span data-i18n="label_inner">Inner Radius</span>
                     </label>
                     <div class="input-wrapper">
-                        <input type="number" id="innerInput" value="30" min="0">
-                        <span class="unit">px</span>
+                        <input type="number" id="innerInput" value="30" min="0" step="1" inputmode="numeric" autocomplete="off">
+                        <span class="unit" aria-hidden="true">px</span>
                     </div>
-                    <input type="range" id="innerRange" min="0" max="200" value="30" class="slider slider-inner">
+                    <input type="range" id="innerRange" min="0" max="200" value="30" class="slider slider-inner" aria-label="Inner radius (slider)">
                 </div>
 
             </section>
@@ -72,7 +79,7 @@
                 </div>
             </section>
         </div>
-        
+
         <footer class="footer-note" data-i18n="footer">Open Source project on GitHub | Made for designers</footer>
     </main>
 

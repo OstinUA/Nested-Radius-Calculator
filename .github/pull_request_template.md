@@ -10,7 +10,7 @@ Resolves #
 - [ ] Refactoring / Technical Debt
 
 ## Testing Performed
-- [ ] Local execution of `process_event.py`
+- [ ] Local execution of `python process_pr.py` or `python "trigger action/trigger_action.py"`
 - [ ] Verified JSON output structure from Gemini API
 - [ ] Tested GitHub Action workflow trigger (dry-run)
 - [ ] Other: 

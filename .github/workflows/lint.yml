@@ -4,14 +4,15 @@ on:
   pull_request:
   workflow_dispatch:
 
+permissions: read-all
+
 concurrency:
   group: lint-${{ github.ref }}
   cancel-in-progress: true
 
-permissions: read-all
-
 jobs:
   lint:
+    name: Frontend and tooling checks
     runs-on: ubuntu-latest
     timeout-minutes: 10
 
@@ -21,39 +22,32 @@ jobs:
         with:
           ref: ${{ github.head_ref }}
 
-      - name: Setup Node.js
+      - name: Set up Node.js
         uses: actions/setup-node@v6
         with:
           node-version: '20'
 
-      - name: Install dependencies
-        run: |
-          if [ ! -f package.json ]; then
-            echo "No package.json found. Skipping npm install."
-            exit 0
-          fi
-          if [ -f package-lock.json ]; then
-            echo "package-lock.json found. Running fast install (npm ci)..."
-            npm ci
-          else
-            echo "package-lock.json NOT found. Generating it (npm install)..."
-            npm install --no-audit --no-fund
-          fi
-
-      - name: Run project lint script when available
-        run: |
-          if [ -f package.json ]; then
-            npm run lint --if-present
-          else
-            echo "No package.json found. Skipping lint."
-          fi
-
+      # The site is dependency-free, so no install step is required. Every
+      # shipped module is syntax-checked; the glob covers the application
+      # modules, the localization runtime and all locale dictionaries.
       - name: Validate JavaScript syntax
         run: |
-          if [ -d api ]; then
-            while IFS= read -r -d '' file; do
-              node --check "$file"
-            done < <(find api -type f -name '*.js' -print0)
-          else
-            echo "No api/ directory found. Skipping JavaScript syntax validation."
+          shopt -s globstar nullglob
+          files=(script.js radius.mjs i18n/**/*.mjs)
+          if [ ${#files[@]} -eq 0 ]; then
+            echo "No JavaScript modules found."
+            exit 1
           fi
+          for file in "${files[@]}"; do
+            node --check "$file"
+          done
+          echo "Checked ${#files[@]} module(s)."
+
+      # Parses every dictionary and compares the key set with the reference
+      # locale, catching missing or misspelled keys before they reach the UI.
+      - name: Validate translation dictionaries
+        run: node --input-type=module -e "import('./i18n/index.mjs');"
+
+      - name: Validate Python syntax
+        run: |
+          python3 -m compileall -q process_pr.py "trigger action"

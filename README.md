@@ -67,18 +67,22 @@ A zero-build, browser-native utility for calculating visually correct nested cor
 ```text
 Nested-Radius-Calculator/
 ├── .github/
+│   ├── workflows/               # CI: lint, SAST, Scorecard, automation
 │   └── FUNDING.yml              # Funding links used by GitHub
+├── i18n/
+│   ├── index.mjs                # Locale registry, resolution, and key guard
+│   └── locales/                 # One ISO-locale dictionary per language
+├── tools/
+│   └── requirements.txt         # Pinned automation dependencies
+├── index.html                   # Page markup and control layout
+├── radius.mjs                   # Geometry rules and input normalisation (DOM-free)
+├── script.js                    # UI controller: state, events, rendering
+├── style.css                    # Design tokens, layout, and preview styling
+├── process_pr.py                # PR → issue documentation automation
+├── trigger action/
+│   └── trigger_action.py        # Label-driven triage issue automation
 ├── LICENSE                      # Apache 2.0 license text
-├── README.md                    # Project documentation
-├── img_nested-radius-calculator.PNG
-│                               # README preview asset
-├── index.html                   # Single-page app markup and control layout
-├── process_pr.py                # Repository utility script
-├── script.js                    # Radius calculation, event handlers, and rendering logic
-├── style.css                    # Theme, spacing, responsive layout, and preview styling
-└── i18n/                        # Locale registry, validation, and per-language dictionaries
-    ├── index.mjs                # i18n entry point and key synchronization guard
-    └── locales/                 # One ISO-locale file per supported language
+└── README.md                    # Project documentation
 ```
 
 ### Key Design Decisions
@@ -86,8 +90,8 @@ Nested-Radius-Calculator/
 #### 1. Static-first architecture
 The project intentionally avoids a build pipeline. That decision keeps onboarding trivial, reduces maintenance overhead, and makes the tool easy to host on any static file server.
 
-#### 2. DOM-centric state management
-Rather than introducing a framework or external state container, the implementation reads directly from DOM inputs and writes back to the DOM after each interaction. For a small, deterministic calculator, this keeps the execution model obvious and easy to debug.
+#### 2. Unidirectional state flow
+The controller in `script.js` owns a single frozen snapshot of the three values. Each control is bound to one intent handler (`outer`, `padding`, or `inner`); the handler recomputes the remaining two values, then writes the snapshot to both the number field and the slider of every parameter. Nothing is ever read back out of the DOM, so the two controls for one parameter cannot drift apart and there are no listener feedback loops. The DOM is treated strictly as a rendering target.
 
 #### 3. Formula-driven synchronization
 The core interaction model is built around a simple invariant:
@@ -122,7 +126,7 @@ flowchart LR
 ```
 
 > [!TIP]
-> If you plan to extend the project, keep the current formula logic isolated in `script.js` so alternate unit systems, presets, or export formats can be added without changing the core HTML structure.
+> The radius rules live in `radius.mjs`, which has no DOM or browser dependencies. Extending the tool with alternate units, presets, or export formats therefore starts from a module that can be unit-tested on its own, without touching the markup or the controller.
 
 ## Getting Started
 
@@ -182,7 +186,7 @@ http://localhost:8080
 
 ## Testing
 
-This repository currently does **not** include an automated test suite, linter configuration, or CI-driven browser tests. Validation is therefore manual unless you add tooling.
+The repository does not ship a bundled test runner; the calculator is small enough that its behaviour is specified by the geometry module and verified manually in the browser. CI still gates every pull request with the static checks below.
 
 ### Current validation workflow
 
@@ -202,23 +206,23 @@ Then verify the following behaviors in the browser:
 6. Switching languages updates all `data-i18n` labels, the document title, and footer text across every supported locale.
 7. Responsive layout remains usable below `768px` viewport width.
 
-### Recommended commands if you add quality gates
+### Automated checks
 
-If you choose to introduce automated checks, these are sensible starting points for a static frontend project:
+`.github/workflows/lint.yml` runs on every pull request and validates that the change set is sound without installing any project dependencies:
 
 ```bash
-# HTML validation example
-npx html-validate index.html
+# Syntax-check every shipped module
+shopt -s globstar
+for file in script.js radius.mjs i18n/**/*.mjs; do node --check "$file"; done
 
-# CSS linting example
-npx stylelint "*.css"
+# Parse all dictionaries and assert their keys match the reference locale
+node --input-type=module -e "import('./i18n/index.mjs');"
 
-# JavaScript linting example
-npx eslint script.js i18n/index.mjs i18n/locales/*.mjs
+# Compile the automation scripts
+python3 -m compileall -q process_pr.py "trigger action"
 ```
 
-> [!WARNING]
-> The commands above are recommendations only. They are not wired into the repository today and will fail until the corresponding toolchain is added.
+The same workflow, plus CodeQL analysis, OpenSSF Scorecard, and Dependabot maintenance, is defined under `.github/workflows/`.
 
 ## Deployment
 
@@ -302,19 +306,14 @@ That maps to CSS like this:
 ### Browser-side initialization flow
 
 ```html
-<!-- Minimal HTML shell -->
 <link rel="stylesheet" href="style.css">
-<script src="translations.js"></script>
-<script src="script.js"></script>
+<script type="module" src="script.js"></script>
 ```
 
 ```js
-// The application bootstraps itself on DOMContentLoaded.
-// It initializes the default language and seeds the first calculation.
-document.addEventListener('DOMContentLoaded', () => {
-  setLanguage('en');
-  updateFromOuter(40);
-});
+// script.js is a module, so it runs after the document is parsed and
+// bootstraps itself: it registers the locale options, applies the preferred
+// language, seeds the initial state, and performs the first render.
 ```
 
 ### Practical UI example
@@ -349,38 +348,30 @@ There are currently **no** CLI flags or boot-time parameters.
 
 ### Configuration surfaces that do exist
 
-#### 1. `translations.js`
-Use this file to customize or extend the available languages.
+#### 1. `i18n/`
 
-Current language keys:
+`i18n/index.mjs` holds the locale registry; each dictionary lives in `i18n/locales/` as a single default export. The registry drives the language picker, the lookup table, and the startup validation, so adding a language is one import plus one entry.
 
-- `en`
-- `ru`
-- `ua`
-- `hi`
-- `es`
-- `ar`
-- `fr`
-- `pt`
-- `de`
-- `id`
+Current locales:
 
-Translation shape:
+`en`, `zh`, `es`, `fr`, `pt`, `ru`, `ja`, `de`, `uk`, `pl`, `nl`, `kk`, `sv`, `cs`
+
+Dictionary shape:
 
 ```js
-const translations = {
-  en: {
-    title: "Corner Radius Calculator",
-    label_outer: "Outer Radius",
-    label_padding: "Padding",
-    label_inner: "Inner Radius",
-    pill_outer: "Outer",
-    pill_padding: "Padding",
-    pill_inner: "Inner",
-    footer: "Open Source project on GitHub | Made for designers"
-  }
+export default {
+  title: "Corner Radius Calculator",
+  label_outer: "Outer Radius",
+  label_padding: "Padding",
+  label_inner: "Inner Radius",
+  pill_outer: "Outer",
+  pill_padding: "Padding",
+  pill_inner: "Inner",
+  footer: "Open Source project on GitHub | Made for designers"
 };
 ```
+
+`data-i18n` attributes in `index.html` reference these keys. Every dictionary must expose exactly the same key set as `en`; a missing, unexpected, or blank entry aborts initialisation with an error naming the locale and the offending keys.
 
 #### 2. `script.js`
 Use this file to change calculation rules, default values, event behavior, or rendering logic.
@@ -392,6 +383,8 @@ When outer changes:  inner = max(outer - padding, 0)
 When padding changes: inner = max(outer - padding, 0)
 When inner changes:  outer = inner + padding
 ```
+
+The picker preselects the first supported browser language (`pt-BR` resolves to `pt`), falling back to `en`, and remembers an explicit choice in `localStorage` when storage is available.
 
 #### 3. `style.css`
 Use this file to configure theme tokens, spacing, layout breakpoints, and preview appearance.
@@ -409,12 +402,11 @@ Use this file to modify form layout, copy, available controls, or initial slider
 ### Configuration caveats
 
 > [!NOTE]
-> Input ranges are currently hard-coded in the HTML:
-> - `Outer Radius`: `0` to `200`
-> - `Padding`: `0` to `100`
-> - `Inner Radius`: `0` to `200`
+> The sliders expose a comfortable editing range, while the numeric fields accept any value inside the calculator's domain:
+> - sliders: `Outer Radius` `0`–`200`, `Padding` `0`–`100`, `Inner Radius` `0`–`200`
+> - numeric fields: `0`–`1000`, rounded to whole pixels
 >
-> If you need larger values, update both the numeric expectations in `script.js` and the corresponding `<input type="range">` attributes in `index.html`.
+> The domain and the normalisation rule live in `radius.mjs` (`RADIUS_LIMIT`, `toRadiusPixels`). Widen the slider attributes in `index.html` and the limit in that module together.
 
 ## License
 
